@@ -1,0 +1,19 @@
+#ifndef INCLUDE_features_h__
+#define INCLUDE_features_h__
+
+#define GIT_ARCH_32 1
+#define GIT_USE_NSEC 1
+#define GIT_USE_STAT_MTIM 1
+#define GIT_USE_FUTIMENS 1
+
+#define GIT_REGEX_REGCOMP 1
+#define GIT_QSORT_GNU 1
+
+#define GIT_HTTPPARSER_BUILTIN 1
+#define GIT_SHA1_COLLISIONDETECT 1
+#define GIT_SHA256_BUILTIN 1
+#define GIT_COMPRESSION_BUILTIN 1
+#define GIT_RAND_GETENTROPY 1
+#define GIT_IO_POLL 1
+
+#endif

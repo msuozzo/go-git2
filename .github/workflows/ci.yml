@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # The published modules on every Go release from their go.mod minimum to
+  # the latest, on each platform. Add new Go releases here as they ship.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ['1.25', '1.26', '1.27']
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Run the Go under test, not a newer one that a go.work asks for.
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+      - name: Workspace
+        # The repository's go.work includes bench, which needs a newer Go
+        # than the published modules, so they get a workspace of their own.
+        # Its replaces map the versions they require of each other to this
+        # checkout, which bench's replaces do in the repository's go.work.
+        # Its paths are relative, because Go on Windows doesn't match its
+        # working directory against absolute paths written with slashes.
+        run: |
+          req() { (cd "$1" && go mod edit -json | jq -r --arg p "$2" '.Require[] | select(.Path == $p).Version'); }
+          mkdir -p .ci
+          cat > .ci/go.work <<EOF
+          go $(awk '$1 == "go" { print $2 }' go.mod)
+
+          use (
+          	..
+          	../libgit2
+          	../billyfs
+          )
+
+          replace (
+          	github.com/msuozzo/go-git2 $(req billyfs github.com/msuozzo/go-git2) => ..
+          	github.com/msuozzo/go-git2/libgit2 $(req . github.com/msuozzo/go-git2/libgit2) => ../libgit2
+          )
+          EOF
+          cat .ci/go.work
+          # GOWORK must be absolute. On Windows, pwd -W gives a path Go reads.
+          echo "GOWORK=$(pwd -W 2>/dev/null || pwd)/.ci/go.work" >> "$GITHUB_ENV"
+      - name: Vet
+        run: |
+          go vet ./...
+          go vet -tags git2_heapmem ./...
+          (cd libgit2 && go vet ./...)
+          (cd billyfs && go vet ./...)
+      - name: Test
+        # Fixtures are built with the git CLI, present on the runners.
+        run: |
+          go test -race ./...
+          go test -tags git2_heapmem ./...
+          (cd libgit2 && go test ./...)
+          (cd billyfs && go test -race ./...)
+
+  # Formatting and the bench module, on the latest Go.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Format
+        # libgit2/libgit2.go is wasm2go's output, which gofmt would reflow.
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '^libgit2/libgit2\.go$'))
+          if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+      - name: Vet bench
+        run: (cd bench && go vet ./...)
+
+  # The generated module must be exactly what its sources produce.
+  generated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Regenerate
+        run: libgit2/build/regen.sh
+      - name: Compare with the committed module
+        run: |
+          git status --porcelain
+          git diff --stat --exit-code
+          test -z "$(git status --porcelain)"
